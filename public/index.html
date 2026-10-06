@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>团建词语分发</title>
+<style>
+:root{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#211a2c;background:#f7f3ff}
+*{box-sizing:border-box}body{margin:0}.wrap{max-width:680px;margin:auto;padding:22px 16px 44px}
+h1{font-size:32px;margin:8px 0 4px}.sub{color:#756c82;margin-bottom:22px}
+.card{background:#fff;border:1px solid #e5dff0;border-radius:20px;padding:20px;margin:14px 0}
+label{display:block;font-weight:700;margin-top:8px}input{width:100%;padding:13px;border:1px solid #d8cfe4;border-radius:12px;margin:7px 0 14px;font-size:16px}
+button{width:100%;padding:14px;border:0;border-radius:13px;font-size:16px;font-weight:800;cursor:pointer;margin-top:8px}
+.primary{background:#6d3fd3;color:#fff}.secondary{background:#eee8f8;color:#342a45}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.qr{width:100%;max-width:280px;border-radius:12px}
+.center{text-align:center}.muted{color:#7b7284}.players{display:grid;gap:8px}.player{display:flex;justify-content:space-between;background:#f7f3ff;padding:12px;border-radius:12px}
+.wordbox{border:1px solid #e2d9ee;border-radius:18px;padding:20px;text-align:center;margin:12px 0;background:#faf8fd}
+.word{font-size:30px;font-weight:900;margin:8px 0}.round{font-size:14px;color:#756c82}
+.error{background:#fff0f2;color:#b4233c;padding:10px;border-radius:10px;margin-bottom:12px}
+.big{font-size:42px;font-weight:900}
+@media(max-width:480px){.grid{grid-template-columns:1fr}h1{font-size:28px}}
+</style>
+</head>
+<body>
+<div class="wrap"><div id="app"></div></div>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket=io();
+const app=document.getElementById("app");
+const preset=new URLSearchParams(location.search).get("room");
+let state={screen:"home",room:null,qr:null,joinUrl:"",words:null,error:""};
+
+function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]))}
+function host(){return state.room?.hostId===socket.id}
+function me(){return state.room?.players.find(p=>p.id===socket.id)}
+function error(s){state.error=s;render();setTimeout(()=>{if(state.error===s){state.error="";render()}},3000)}
+function base(title,body){
+app.innerHTML=`<h1>${title}</h1><div class="sub">扫码进入 · 每人只看到自己的词语</div>${state.error?`<div class="error">${esc(state.error)}</div>`:""}${body}`;
+}
+function render(){
+ if(state.screen==="home") return home();
+ if(state.screen==="lobby") return lobby();
+ if(state.screen==="words") return words();
+ if(state.screen==="done") return done();
+}
+function home(){
+base("🎭 团建词语分发",`
+<div class="card">
+<label>你的昵称</label><input id="name" maxlength="20" placeholder="例如：小王">
+<label>房间人数上限</label><input id="max" type="number" min="3" max="12" value="8">
+<div class="grid">
+<button class="primary" id="create">创建房间</button>
+<button class="secondary" id="join">加入房间</button>
+</div>
+${preset?`<p class="muted">检测到房间号：<b>${esc(preset)}</b></p>`:""}
+</div>
+<div class="card"><b>玩法</b><p class="muted">房主创建房间后，把二维码给大家扫码。所有人进入后，房主点击“开始分发”，系统会给每个人秘密分配2个词语。</p></div>`);
+document.getElementById("create").onclick=()=>socket.emit("room:create",{name:document.getElementById("name").value,maxPlayers:Number(document.getElementById("max").value)});
+document.getElementById("join").onclick=()=>{
+ const id=preset||prompt("输入房间号");
+ if(id) socket.emit("room:join",{roomId:id,name:document.getElementById("name").value});
+};
+}
+function lobby(){
+const ps=state.room.players;
+base(`房间 ${esc(state.room.id)}`,`
+<div class="card center">
+${state.qr?`<img class="qr" src="${state.qr}" alt="扫码加入房间">`:""}
+<p>请大家扫码进入</p>
+<p class="muted">房间号：<b>${esc(state.room.id)}</b></p>
+</div>
+<div class="card">
+<h2>玩家 ${ps.length}/${state.room.maxPlayers}</h2>
+<div class="players">${ps.map(p=>`<div class="player"><span>${esc(p.name)} ${p.id===state.room.hostId?"👑":""}</span><span>${p.connected?"在线":"离线"}</span></div>`).join("")}</div>
+</div>
+${host()?`<button class="primary" id="start">开始分发词语</button>`:`<div class="card center muted">等待房主开始分发…</div>`}`);
+document.getElementById("start")?.addEventListener("click",()=>socket.emit("game:start",{roomId:state.room.id}));
+}
+function words(){
+base(`你的第 ${state.words.round} 轮词语`,`
+<div class="card center">
+<div class="big">🔒</div>
+<h2>这是你的秘密词语</h2>
+<p class="muted">不要把屏幕给其他玩家看。</p>
+${state.words.words.map((w,i)=>`<div class="wordbox"><div class="round">词语 ${i+1}</div><div class="word">${esc(w)}</div></div>`).join("")}
+</div>
+${host()?`<button class="primary" id="next">重新分发下一轮</button>`:`<div class="card center muted">词语已经发放完毕，可以开始你们的线下游戏。</div>`}`);
+document.getElementById("next")?.addEventListener("click",()=>socket.emit("game:next",{roomId:state.room.id}));
+}
+function done(){
+base("词语已发放",`<div class="card center"><div class="big">✓</div><h2>所有玩家都已收到词语</h2><p class="muted">可以开始你们的线下游戏了。</p></div>`);
+}
+
+socket.on("room:created",d=>{state.room=d.room;state.qr=d.qr;state.joinUrl=d.joinUrl;state.screen="lobby";render()});
+socket.on("room:joined",d=>{state.room=d.room;state.screen="lobby";render()});
+socket.on("room:update",r=>{state.room=r;if(state.screen==="lobby")render()});
+socket.on("words:private",d=>{state.words=d;state.screen="words";render()});
+socket.on("error:msg",error);
+render();
+</script>
+</body>
+</html>
